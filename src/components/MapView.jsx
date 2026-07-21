@@ -1,19 +1,40 @@
-import React, { useEffect, useRef } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import mapboxgl from "mapbox-gl";
 import "mapbox-gl/dist/mapbox-gl.css";
-
 import MapboxDraw from "@mapbox/mapbox-gl-draw";
 import "@mapbox/mapbox-gl-draw/dist/mapbox-gl-draw.css";
 import * as turf from "@turf/turf";
+import { FiSave, FiTrash2, FiDownload, FiUpload } from "react-icons/fi";
 
 mapboxgl.accessToken = import.meta.env.VITE_MAPBOX_TOKEN;
 
 const MapView = ({ markers, setMarkers, polygons, setPolygons }) => {
-  const [polygonArea, setPolygonArea] = React.useState(null);
   const mapContainerRef = useRef(null);
   const mapRef = useRef(null);
-  const markerRef = useRef([]);
   const drawRef = useRef(null);
+  const markersRef = useRef([]);
+  const fileInputRef = useRef(null);
+
+  const [polygonArea, setPolygonArea] = useState(null);
+
+  const createMarker = (map, lng, lat) => {
+    const marker = new mapboxgl.Marker()
+      .setLngLat([lng, lat])
+      .setPopup(
+        new mapboxgl.Popup().setText(
+          `Lat: ${lat.toFixed(4)}, Lng: ${lng.toFixed(4)}`
+        )
+      )
+      .addTo(map);
+
+    marker.getElement().addEventListener("click", (e) => {
+      e.stopPropagation();
+      marker.togglePopup();
+    });
+
+    markersRef.current.push(marker);
+    return marker;
+  };
 
   useEffect(() => {
     const map = new mapboxgl.Map({
@@ -23,139 +44,203 @@ const MapView = ({ markers, setMarkers, polygons, setPolygons }) => {
       style: "mapbox://styles/mapbox/streets-v12",
     });
 
-    const draw = new MapboxDraw({
-      displayControlsDefault: false,
-      controls: {
-        trash: true,
-        polygon: true,
-      },
-    });
-
-    drawRef.current = draw;
-
-    const updateArea = (e) => {
-      const data = draw.getAll();
-      if (data?.features?.length > 0) {
-        const area = turf.area(data);
-        setPolygonArea(area);
-        setPolygons(data.features);
-      } else {
-        setPolygonArea(null);
-      }
-    };
-
-    map.on("click", (e) => {
-      if (draw.getMode() === "draw_polygon") return;
-      const { lng, lat } = e.lngLat;
-      const marker = new mapboxgl.Marker()
-        .setLngLat([lng, lat])
-        .setPopup(new mapboxgl.Popup().setText(`Lng: ${lng}, Lat: ${lat}`))
-        .addTo(map);
-
-      marker.getElement().addEventListener("click", (event) => {
-        event.stopPropagation();
-        marker.togglePopup();
-      });
-
-      markerRef.current.push(marker);
-      setMarkers((prev) => [
-        ...prev,
-        {
-          lng: lng,
-          lat: lat,
-          id: Date.now(),
-        },
-      ]);
-    });
-
-    map.addControl(draw);
-    map.on("draw.create", updateArea);
-    map.on("draw.update", updateArea);
-    map.on("draw.delete", () => {
-      setPolygonArea(null);
-      setPolygons([]);
-    });
-
     mapRef.current = map;
 
     map.on("load", () => {
-      const parsedData = JSON.parse(localStorage.getItem("map-state"));
-      if (!parsedData) return;
-      parsedData.markers.forEach((el) => {
-        console.log("kajd lkfjl el", parsedData);
-        const marker = new mapboxgl.Marker()
-          .setLngLat([el.lng, el.lat])
-          .setPopup(
-            new mapboxgl.Popup().setText(`Lng: ${el.lng}, Lat: ${el.lat}`)
-          )
-          .addTo(map);
-        marker.getElement().addEventListener("click", (event) => {
-          event.stopPropagation();
-          marker.togglePopup();
-        });
-        markerRef.current.push(marker);
+      const draw = new MapboxDraw({
+        displayControlsDefault: false,
+        controls: {
+          trash: true,
+          polygon: true,
+        },
       });
-      if (parsedData?.polygons?.length > 0) {
-        draw.set({
-          type: "FeatureCollection",
-          features: parsedData.polygons,
+
+      map.addControl(draw);
+      drawRef.current = draw;
+
+      const updateArea = () => {
+        const data = draw.getAll();
+        if (data?.features?.length > 0) {
+          const area = turf.area(data);
+          setPolygonArea(area.toFixed(2));
+          setPolygons(data.features);
+        } else {
+          setPolygonArea(null);
+        }
+      };
+
+      map.on("click", (e) => {
+        if (draw.getMode() === "draw_polygon") return;
+
+        const { lng, lat } = e.lngLat;
+        createMarker(map, lng, lat);
+
+        setMarkers((prev) => [...(prev || []), { lng, lat, id: Date.now() }]);
+      });
+
+      map.on("draw.create", updateArea);
+      map.on("draw.update", updateArea);
+      map.on("draw.delete", () => {
+        setPolygonArea(null);
+        setPolygons([]);
+      });
+
+      const saved = localStorage.getItem("mapstate");
+      if (saved) {
+        const parsed = JSON.parse(saved);
+
+        parsed.markers?.forEach((m) => {
+          createMarker(map, m.lng, m.lat);
         });
+        setMarkers(parsed.markers || []);
+
+        if (parsed.polygons?.length > 0) {
+          draw.set({ type: "FeatureCollection", features: parsed.polygons });
+          setPolygons(parsed.polygons);
+          updateArea();
+        }
       }
-      setMarkers(parsedData?.markers);
-      setPolygons(parsedData?.polygons);
     });
 
-    return () => {
-      map.remove();
-    };
+    return () => map.remove();
   }, []);
 
   const saveData = () => {
-    localStorage.setItem("map-state", JSON.stringify({ markers, polygons }));
+    localStorage.setItem("mapstate", JSON.stringify({ markers, polygons }));
+    alert("Map state saved!");
   };
 
-  const clearData = () => {
-    localStorage.removeItem("map-state");
+  const clearAll = () => {
+    markersRef.current.forEach((marker) => marker.remove());
+    markersRef.current = [];
+
+    drawRef.current.deleteAll();
     setMarkers([]);
     setPolygons([]);
     setPolygonArea(null);
-    markerRef.current.forEach((el) => {
-      el.remove();
-    });
-    drawRef.current.deleteAll();
+    localStorage.removeItem("mapstate");
   };
-  const export_data = () => {
-    const exportData = drawRef.current.getAll();
-    markers.forEach((el) => {
-      exportData?.features.push({
+
+  const exportGeoJSON = () => {
+    const data = drawRef.current.getAll();
+
+    data.features.push(
+      ...markers.map((m) => ({
         type: "Feature",
+        geometry: { type: "Point", coordinates: [m.lng, m.lat] },
         properties: {},
-        geometry: {
-          type: "Point",
-          coordinates: [el.lng, el.lat],
-        },
-      });
-    });
+      }))
+    );
 
-    console.log("exportData", exportData);
-
-    const blob = new Blob([JSON.stringify(exportData)], {
+    const blob = new Blob([JSON.stringify(data)], {
       type: "application/json",
     });
     const url = URL.createObjectURL(blob);
-    const anchor = document.createElement("a");
-    anchor.href = url;
-    anchor.download = "map-state.geojson";
-    anchor.click();
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = "map-data.geojson";
+    a.click();
+    URL.revokeObjectURL(url);
+  };
+
+  const handleImportClick = () => {
+    fileInputRef.current.click();
+  };
+
+  const handleFileChange = (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+
+    const reader = new FileReader();
+
+    reader.onload = (event) => {
+      try {
+        const geojson = JSON.parse(event.target.result);
+
+        if (!geojson.features || !Array.isArray(geojson.features)) {
+          alert("Invalid GeoJSON file");
+          return;
+        }
+
+        const importedMarkers = [];
+        const polygonFeatures = [];
+        const map = mapRef.current;
+
+        geojson.features.forEach((feature) => {
+          if (feature.geometry.type === "Point") {
+            const [lng, lat] = feature.geometry.coordinates;
+            createMarker(map, lng, lat);
+            importedMarkers.push({ lng, lat, id: Date.now() + Math.random() });
+          } else if (
+            feature.geometry.type === "Polygon" ||
+            feature.geometry.type === "MultiPolygon"
+          ) {
+            polygonFeatures.push(feature);
+          }
+        });
+
+        setMarkers((prev) => [...prev, ...importedMarkers]);
+
+        if (polygonFeatures.length > 0) {
+          const existing = drawRef.current.getAll();
+          const merged = {
+            type: "FeatureCollection",
+            features: [...existing.features, ...polygonFeatures],
+          };
+          drawRef.current.set(merged);
+          setPolygons(merged.features);
+
+          const area = turf.area(merged);
+          setPolygonArea(area.toFixed(2));
+        }
+
+        alert("GeoJSON imported successfully!");
+      } catch (err) {
+        alert("Error parsing GeoJSON file");
+        console.error(err);
+      }
+    };
+
+    reader.readAsText(file);
+    e.target.value = "";
   };
 
   return (
     <div className="map-wrapper">
       <div className="map-container" ref={mapContainerRef} />
+
+      {polygonArea && (
+        <div className="area-stamp">
+          <span className="stamp-label">POLYGON AREA</span>
+          <span className="stamp-value">{polygonArea} m²</span>
+        </div>
+      )}
+
       <div className="controls">
-        <button onClick={saveData}>Save</button>
-        <button onClick={clearData}>Clear</button>
-        <button onClick={export_data}>Export</button>
+        <button className="control-btn btn-save" onClick={saveData}>
+          <FiSave size={15} />
+          <span>Save</span>
+        </button>
+        <button className="control-btn btn-clear" onClick={clearAll}>
+          <FiTrash2 size={15} />
+          <span>Clear</span>
+        </button>
+        <button className="control-btn btn-export" onClick={exportGeoJSON}>
+          <FiDownload size={15} />
+          <span>Export</span>
+        </button>
+        <button className="control-btn btn-import" onClick={handleImportClick}>
+          <FiUpload size={15} />
+          <span>Import</span>
+        </button>
+
+        <input
+          type="file"
+          accept=".geojson,application/geo+json,application/json"
+          ref={fileInputRef}
+          style={{ display: "none" }}
+          onChange={handleFileChange}
+        />
       </div>
     </div>
   );

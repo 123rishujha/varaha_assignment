@@ -1,21 +1,34 @@
 import { useState } from "react";
-import reactLogo from "./assets/react.svg";
-import viteLogo from "./assets/vite.svg";
-import heroImg from "./assets/hero.png";
 import "./App.css";
 import MarkerSidebar from "./components/MarkerSidebar";
 import MapView from "./components/MapView";
-
-//mapbox-gl
-//mapbox-gl-draw
+import { FiMenu, FiX } from "react-icons/fi";
 
 function App() {
   const [markers, setMarkers] = useState([]);
   const [polygons, setPolygons] = useState([]);
+  const [sidebarOpen, setSidebarOpen] = useState(false);
 
   return (
     <div className="App">
-      <MarkerSidebar markers={markers} />
+      <button
+        className="sidebar-toggle"
+        onClick={() => setSidebarOpen((prev) => !prev)}
+      >
+        {sidebarOpen ? <FiX size={20} /> : <FiMenu size={20} />}
+      </button>
+
+      {sidebarOpen && (
+        <div
+          className="sidebar-backdrop"
+          onClick={() => setSidebarOpen(false)}
+        />
+      )}
+
+      <div className={`sidebar-shell ${sidebarOpen ? "open" : ""}`}>
+        <MarkerSidebar markers={markers} />
+      </div>
+
       <MapView
         markers={markers}
         setMarkers={setMarkers}
